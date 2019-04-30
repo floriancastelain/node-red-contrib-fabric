@@ -19,9 +19,9 @@ module.exports = function (RED) {
     const fabricClient = require('fabric-client');
 
     var eventHandlers = [];
-    //const eventHandlers = [];
     let gateway = new fabricNetwork.Gateway();
     let network;
+
 
     /**
      *
@@ -96,148 +96,36 @@ module.exports = function (RED) {
         });
     }
 
-    async function subscribeToEvents(channelName, contractName, eventName = '.*', node) {
-        node.log(`subscribe ${channelName} ${contractName} ${eventName}`);
-        const network = await gateway.getNetwork(channelName);
-        const channel = network.getChannel();
-        node.log('got channel');
-        const eventHubs = channel.getChannelEventHubsForOrg();
-        node.log('got event hubs');
-        eventHubs.forEach((eventHub) => {
-            eventHub.connect(true);
-            node.log('connected to event hub');
-            const eventHandler = eventHub.registerChaincodeEvent(contractName, eventName, (event, blockNumber, txid, status) => {
-                node.log('got event ' + event.event_name + ' ' + event.payload);
-                const msg = {
-                    eventName: event.event_name,
-                    payload: event.payload,
-                    blockNumber: blockNumber,
-                    txid: txid,
-                    status: status
-                };
-                node.status({});
-                node.send(msg);
-            }, (error) => {
-                node.log('error', error);
-                throw new Error(error.message);
-            }, {});
-
-            eventHandlers.push(eventHandler);
-            node.log('added event handler to list');
-        });
-    }
 
 
-    /**
- * An event subscriber that subscribes to only one event and closes after a 2sec timeout if required
- * It also can listen on an interval of blocks, useful in cases you do not want to keep listenning
- * Sends all the events in an array or one by one in the msg.payload depending on the configuration
- * @param {peer} peer The peer to connect to
- * @param {channel} channel The channel on which create the event hub
- * @param {string} chaincodeName The name of the chaincode
- * @param {string} eventName The name of the event to listen to
- * @param {integer} startBlock The block to start listenning from (0 by default)
- * @param {integer} endBlock The last block to listen to (newest by default)
- * @param {Node} node node
- * @param {object} msg The msg object 
- * @param {boolean} timeout A parameter that specifies if the listener must timeout or not. This must be used if the purpose of the listener is to check for specific events on a specific range of blocks. Else, it will run forever
- * @returns {Promise<Buffer>} promise
- */
-    async function subscribeToEvent(peer, channel, chaincodeName,
-        eventName, startBlock, endBlock, node, msg, timeout = true) {
-        let eventHub = channel.newChannelEventHub(peer);
-        startBlock = parseInt(startBlock);
-        endBlock = parseInt(endBlock);
-        var options = {};
-        // In case the user did not provide the field
-        if (isNaN(startBlock)) {
-            options.startBlock = 0;
-        } else {
-            options.startBlock = startBlock;
-        }
-        if (!isNaN(endBlock)) {
-            options.endBlock = endBlock;
-            //https://jira.hyperledger.org/browse/FABN-1207
-            //Required due to bug
-            options.disconnect = false;
-        }
-        var event = null;
-        var eventList = [];
 
-        timeout = timeout === "true" ? true : false;
-        if (timeout) {
-            var eventTimeout = setTimeout(() => {
-                if (event) {
-                    eventHub.unregisterChaincodeEvent(event);
-                    node.log("Unregistered chaincode event");
-                    msg.payload = eventList;
-                    node.send(msg);
-                }
-                node.log("Timed out for chaincode event (Expected)");
-            }, 2000);
-        }
 
-        node.log("Event listener options: " + JSON.stringify(options));
-        event = eventHub.registerChaincodeEvent(chaincodeName, eventName, (event, blockNumber, txid, status) => {
-            var eventPayload = {
-                payload: event.payload.toString('utf8'),
-                blockNumber: blockNumber,
-                txid: txid,
-                status: status
-            };
-            // refresh timeout because we want ALL the events in the block interval
-            // not only the ones in the time interval
-            if (timeout) { eventList.push(eventPayload); eventTimeout.refresh(); }
-            else { node.send(eventPayload); }
-            node.status({});
-            // node.send(msg);
-        }, (error) => {
-            console.log(error);
-            node.error(error, msg);
-        }, options);
-        eventHub.connect(true);
-        node.log("Registered event listener");
-    }
 
-    /**
- *
- * @param {string} identityName identityName
- * @param {string} channelName channel
- * @param {string} orgName name of the organization
- * @param {string} peerName name of the peer
- * @param {object} connectionProfile the connection profile as a json
- * @param {string} walletLocation the wallet location (the files, not the folder)
- * @returns {PromiseLike<Contract | never>} promise
- */
-    async function connectToPeer(identityName, channelName,
-        orgName, peerName, connectionProfile, walletLocation) {
+    async function subscribeToEvent(contract, contractName, eventName, node, msg) {
         try {
-            var fabric_client = new fabricClient();
-            var peer = fabric_client.newPeer(connectionProfile.peers[orgName + '-' + peerName].url, { pem: connectionProfile.peers[orgName + '-' + peerName].tlsCACerts.pem, 'ssl-target-name-override': null });
-            var channel = fabric_client.newChannel(channelName);
-            channel.addPeer(peer);
-            var stateStore = await fabricClient.newDefaultKeyValueStore({
-                path: walletLocation
-            });
-            fabric_client.setStateStore(stateStore);
-            var cryptoSuite = fabricClient.newCryptoSuite();
-            var cryptoStore = fabricClient.newCryptoKeyStore({ path: walletLocation });
-            cryptoSuite.setCryptoKeyStore(cryptoStore);
-            fabric_client.setCryptoSuite(cryptoSuite);
-            var userFromStore = await fabric_client.getUserContext(identityName, true);
-            if (!userFromStore || !userFromStore.isEnrolled()) {
-                throw new Error("User not enrolled or not from store");
-            } else {
-                return ({
-                    channel: channel,
-                    peer: peer
+            contract.addContractListener(contractName, eventName,
+                (error, event, blockNumber, txId) => {
+                    if (error) {
+                        console.log(error);
+                        return error;
+                    } else {
+                        msg.payload = {
+                            event: event,
+                            blockNumber: blockNumber
+                        };
+                        node.status({});
+                        node.send(msg);
+                    }
+                }, {
+                    filtered: false
                 });
-            }
         } catch (error) {
-            console.error("Error when connecting to peer");
-            console.log(error);
+            return error;
         }
+
     }
+
+
 
     // /**
     //  *
@@ -302,25 +190,33 @@ module.exports = function (RED) {
         node.on('input', async function (msg) {
             this.connection = RED.nodes.getNode(config.connection);
             try {
+                console.log(msg.payload);
                 //node.log('config ' + util.inspect(node.connection, false, null));
                 const identityName = node.connection.identityName;
                 var channelName = typeof msg.payload.channelName === "string" ? msg.payload.channelName : config.channelName;
                 var contractName = typeof msg.payload.contractName === "string" ? msg.payload.contractName : config.contractName;
-                var actionType = typeof msg.payload.actionType === "string" ? msg.payload.actionType : config.actionType;
-                node.log('using connection: ' + identityName);
-                const connectData = await connect(identityName, channelName, contractName, node);
+                var actionType = typeof msg.payload.actionTypeForm === "string" ? msg.payload.actionTypeForm : config.actionTypeForm;
+                node.log('using connection: ' + identityName + " for action " + actionType);
+                const networkInfo = await connect(identityName, channelName, contractName, node);
                 let result;
-                node.log("actionType " + actionType);
                 if (actionType === "submit") {
-                    result = await submit(connectData.contract, msg.payload, node);
+                    result = await submit(networkInfo.contract, msg.payload, node);
+                    msg.payload = result;
+                    node.status({});
+                    node.send(msg);
                 } else if (actionType === "evaluate") {
-                    result = await evaluate(connectData.contract, msg.payload, node);
-                } else {
-                    result = await query(connectData.network.getChannel(), msg.payload, contractName, node);
+                    result = await evaluate(networkInfo.contract, msg.payload, node);
+                    msg.payload = result;
+                    node.status({});
+                    node.send(msg);
+                } else if (actionType === "query") {
+                    result = await query(networkInfo.network.getChannel(), msg.payload, contractName, node);
+                    msg.payload = result;
+                    node.status({});
+                    node.send(msg);
+                } else if (actionType === "event") {
+                    result = await subscribeToEvent(networkInfo.contract, contractName, msg.payload.eventName, node, msg);
                 }
-                msg.payload = result;
-                node.status({});
-                node.send(msg);
 
             } catch (error) {
                 node.status({ fill: 'red', shape: 'dot', text: 'Error' });
@@ -350,15 +246,14 @@ module.exports = function (RED) {
         const identityName = node.connection.identityName;
         node.log('using connection: ' + identityName);
         connect(identityName, config.channelName, config.contractName, node)
-            .then(() => {
-                return subscribeToEvents(config.channelName, config.contractName, config.eventName, node);
+            .then((connectData) => {
+                // return subscribeToEvent(config.channelName, config.contractName, config.eventName, node);
+                return testEvent(connectData.contract, config.contractName, config.eventName)
             })
             .catch((error) => {
                 node.status({ fill: 'red', shape: 'dot', text: 'Error' });
                 node.error('Error: ' + error.message);
             });
-
-
         node.on('close', () => {
             node.status({ fill: 'red', shape: 'ring', text: 'disconnected' });
             node.log('close');
