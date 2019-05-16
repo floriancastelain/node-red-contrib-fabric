@@ -13,7 +13,7 @@
  */
 
 'use strict';
-module.exports = function (RED) {
+module.exports = function(RED) {
     const util = require('util');
     const fabricNetwork = require('fabric-network');
     const fabricClient = require('fabric-client');
@@ -81,12 +81,12 @@ module.exports = function (RED) {
     }
 
     /**
-    * 
-    * @param {Contract} contract contract
-    * @param {object} payload payload
-    * @param {Node} node node
-    * @returns {Promise<Buffer>} promise
-    */
+     * 
+     * @param {Contract} contract contract
+     * @param {object} payload payload
+     * @param {Node} node node
+     * @returns {Promise<Buffer>} promise
+     */
     function query(channel, payload, contractName, node) {
         node.log(`query ${contractName} ${payload.queryFcn} ${payload.queryArgs}`);
         return channel.queryByChaincode({
@@ -103,21 +103,16 @@ module.exports = function (RED) {
 
     async function subscribeToEvent(contract, contractName, eventName, node, msg) {
         try {
-            contract.addContractListener(contractName, eventName,
+            contract.addContractListener(msg.payload.listenerName, "createBadge",
                 (error, event, blockNumber, txId) => {
-                    if (error) {
-                        console.log(error);
-                        return error;
-                    } else {
-                        msg.payload = {
-                            event: event,
-                            blockNumber: blockNumber
-                        };
-                        node.status({});
-                        node.send(msg);
-                    }
+                    console.log(error);
+                    console.log(event.payload.toString());
+                    console.log(blockNumber);
+                    console.log(txId);
+                    node.send(event);
                 }, {
-                    filtered: false
+                    filtered: false,
+                    start: 10
                 });
         } catch (error) {
             return error;
@@ -150,7 +145,7 @@ module.exports = function (RED) {
         let node = this;
         RED.nodes.createNode(node, config);
 
-        node.on('input', async function (msg) {
+        node.on('input', async function(msg) {
             this.connection = RED.nodes.getNode(config.connection);
             try {
                 const identityName = node.connection.identityName;
@@ -187,7 +182,7 @@ module.exports = function (RED) {
         let node = this;
         RED.nodes.createNode(node, config);
 
-        node.on('input', async function (msg) {
+        node.on('input', async function(msg) {
             this.connection = RED.nodes.getNode(config.connection);
             try {
                 console.log(msg.payload);
@@ -232,10 +227,10 @@ module.exports = function (RED) {
     RED.nodes.registerType('fabric-mid', FabricMidNode);
 
     /**
-        * Create an in node
-        * @param {object} config The configuration set on the node
-        * @constructor
-        */
+     * Create an in node
+     * @param {object} config The configuration set on the node
+     * @constructor
+     */
     function FabricInNode(config) {
         let node = this;
         RED.nodes.createNode(node, config);
@@ -283,15 +278,15 @@ module.exports = function (RED) {
 
 
     /**
-   * Create an event listener node
-   * @param {object} config The configuration set on the node
-   * @constructor
-   */
+     * Create an event listener node
+     * @param {object} config The configuration set on the node
+     * @constructor
+     */
     function FabricEventList(config) {
         let node = this;
         RED.nodes.createNode(node, config);
 
-        node.on('input', async function (msg) {
+        node.on('input', async function(msg) {
             this.connection = RED.nodes.getNode(config.connection);
             try {
                 const identityName = node.connection.identityName;
@@ -306,7 +301,7 @@ module.exports = function (RED) {
                 const endBlock = typeof msg.payload.endBlock === "undefined" ? config.endBlock : msg.payload.endBlock;
                 const timeout = typeof msg.payload.timeout === "undefined" ? config.timeout : msg.payload.timeout;
                 connectToPeer(identityName, channelName, orgName,
-                    peerName, connectionProfile, walletLocation)
+                        peerName, connectionProfile, walletLocation)
                     .then((networkData) => {
                         return subscribeToEvent(networkData.peer, networkData.channel,
                             chaincodeName, eventName, startBlock, endBlock, node, msg, timeout)
@@ -325,4 +320,3 @@ module.exports = function (RED) {
     RED.nodes.registerType('fabric-event-list', FabricEventList);
 
 };
-
